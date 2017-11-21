@@ -490,6 +490,121 @@ spec = parallel $ do
       it "CM247" $
         " 1.  A paragraph\n     with two lines.\n\n         indented code\n\n     > A block quote.\n" ==->
           "<ol>\n<li>\n<p>A paragraph\nwith two lines.</p>\n<pre><code>indented code\n</code></pre>\n<blockquote>\n<p>A block quote.</p>\n</blockquote>\n</li>\n</ol>\n"
+      it "CM248" $
+        "  1.  A paragraph\n      with two lines.\n\n          indented code\n\n      > A block quote.\n" ==->
+          "<ol>\n<li>\n<p>A paragraph\nwith two lines.</p>\n<pre><code>indented code\n</code></pre>\n<blockquote>\n<p>A block quote.</p>\n</blockquote>\n</li>\n</ol>\n"
+      it "CM249" $
+        "   1.  A paragraph\n       with two lines.\n\n           indented code\n\n       > A block quote.\n" ==->
+          "<ol>\n<li>\n<p>A paragraph\nwith two lines.</p>\n<pre><code>indented code\n</code></pre>\n<blockquote>\n<p>A block quote.</p>\n</blockquote>\n</li>\n</ol>\n"
+      it "CM250" $
+        "    1.  A paragraph\n        with two lines.\n\n            indented code\n\n        > A block quote.\n" ==->
+          "<pre><code>1.  A paragraph\n    with two lines.\n\n        indented code\n\n    &gt; A block quote.\n</code></pre>\n"
+      it "CM251" $
+        "  1.  A paragraph\nwith two lines.\n\n          indented code\n\n      > A block quote.\n" ==->
+          "<ol>\n<li>\n<p>A paragraph\nwith two lines.</p>\n<pre><code>indented code\n</code></pre>\n<blockquote>\n<p>A block quote.</p>\n</blockquote>\n</li>\n</ol>\n"
+      it "CM252" $
+        "  1.  A paragraph\n    with two lines.\n" ==->
+          "<ol>\n<li>A paragraph\nwith two lines.</li>\n</ol>\n"
+      it "CM253" $
+        "> 1. > Blockquote\ncontinued here.\n" ==->
+          "<blockquote>\n<ol>\n<li>\n<blockquote>\n<p>Blockquote\ncontinued here.</p>\n</blockquote>\n</li>\n</ol>\n</blockquote>\n"
+      it "CM254" $
+        "> 1. > Blockquote\n> continued here.\n" ==->
+          "<blockquote>\n<ol>\n<li>\n<blockquote>\n<p>Blockquote\ncontinued here.</p>\n</blockquote>\n</li>\n</ol>\n</blockquote>\n"
+      it "CM255" $
+        "- foo\n  - bar\n    - baz\n      - boo\n" ==->
+          "<ul>\n<li>foo\n<ul>\n<li>bar\n<ul>\n<li>baz\n<ul>\n<li>boo</li>\n</ul>\n</li>\n</ul>\n</li>\n</ul>\n</li>\n</ul>\n"
+      it "CM256" $
+        "- foo\n - bar\n  - baz\n   - boo\n" ==->
+          "<ul>\n<li>foo</li>\n<li>bar</li>\n<li>baz</li>\n<li>boo</li>\n</ul>\n"
+      it "CM257" $
+        "10) foo\n    - bar\n" ==->
+          "<ol start=\"10\">\n<li>foo\n<ul>\n<li>bar</li>\n</ul>\n</li>\n</ol>\n"
+      it "CM258" $
+        "10) foo\n   - bar\n" ==->
+          "<ol start=\"10\">\n<li>foo</li>\n</ol>\n<ul>\n<li>bar</li>\n</ul>\n"
+      it "CM259" $
+        "- - foo\n" ==->
+          "<ul>\n<li>\n<ul>\n<li>foo</li>\n</ul>\n</li>\n</ul>\n"
+      it "CM260" $
+        "1. - 2. foo\n" ==->
+          "<ol>\n<li>\n<ul>\n<li>\n<ol start=\"2\">\n<li>foo</li>\n</ol>\n</li>\n</ul>\n</li>\n</ol>\n"
+      it "CM261" $
+        "- # Foo\n- Bar\n  ---\n  baz\n" ==->
+          "<ul>\n<li>\n<h1>Foo</h1>\n</li>\n<li>\n<h2>Bar</h2>\nbaz</li>\n</ul>\n"
+    context "5.3 Lists" $ do
+      it "CM262" $
+        "- foo\n- bar\n+ baz\n" ==->
+          "<ul>\n<li>foo</li>\n<li>bar</li>\n</ul>\n<ul>\n<li>baz</li>\n</ul>\n"
+      it "CM263" $
+        "1. foo\n2. bar\n3) baz\n" ==->
+          "<ol>\n<li>foo</li>\n<li>bar</li>\n</ol>\n<ol start=\"3\">\n<li>baz</li>\n</ol>\n"
+      it "CM264" $
+        "Foo\n- bar\n- baz\n" ==->
+          "<p>Foo</p>\n<ul>\n<li>bar</li>\n<li>baz</li>\n</ul>\n"
+      it "CM265" $
+        "The number of windows in my house is\n14.  The number of doors is 6.\n" ==->
+          "<p>The number of windows in my house is\n14.  The number of doors is 6.</p>\n"
+      it "CM266" $
+        "The number of windows in my house is\n1.  The number of doors is 6.\n" ==->
+          "<p>The number of windows in my house is</p>\n<ol>\n<li>The number of doors is 6.</li>\n</ol>\n"
+      it "CM267" $
+        "- foo\n\n- bar\n\n\n- baz\n" ==->
+          "<ul>\n<li>\n<p>foo</p>\n</li>\n<li>\n<p>bar</p>\n</li>\n<li>\n<p>baz</p>\n</li>\n</ul>\n"
+      it "CM268" $
+        "- foo\n  - bar\n    - baz\n\n\n      bim\n" ==->
+          "<ul>\n<li>foo\n<ul>\n<li>bar\n<ul>\n<li>\n<p>baz</p>\n<p>bim</p>\n</li>\n</ul>\n</li>\n</ul>\n</li>\n</ul>\n"
+      it "CM269" $
+        "- foo\n- bar\n\n<!-- -->\n\n- baz\n- bim\n" ==->
+          "<ul>\n<li>foo</li>\n<li>bar</li>\n</ul>\n<!-- -->\n<ul>\n<li>baz</li>\n<li>bim</li>\n</ul>\n"
+      it "CM270" $
+        "-   foo\n\n    notcode\n\n-   foo\n\n<!-- -->\n\n    code\n" ==->
+          "<ul>\n<li>\n<p>foo</p>\n<p>notcode</p>\n</li>\n<li>\n<p>foo</p>\n</li>\n</ul>\n<!-- -->\n<pre><code>code\n</code></pre>\n"
+      it "CM271" $
+        "- a\n - b\n  - c\n   - d\n    - e\n   - f\n  - g\n - h\n- i\n" ==->
+          "<ul>\n<li>a</li>\n<li>b</li>\n<li>c</li>\n<li>d</li>\n<li>e</li>\n<li>f</li>\n<li>g</li>\n<li>h</li>\n<li>i</li>\n</ul>\n"
+      it "CM272" $
+        "1. a\n\n  2. b\n\n    3. c\n" ==->
+          "<ol>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n<li>\n<p>c</p>\n</li>\n</ol>\n"
+      it "CM273" $
+        "- a\n- b\n\n- c\n" ==->
+          "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n<li>\n<p>c</p>\n</li>\n</ul>\n"
+      it "CM274" $
+        "* a\n*\n\n* c\n" ==->
+          "<ul>\n<li>\n<p>a</p>\n</li>\n<li></li>\n<li>\n<p>c</p>\n</li>\n</ul>\n"
+      it "CM275" $
+        "- a\n- b\n\n  c\n- d\n" ==->
+          "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n<p>c</p>\n</li>\n<li>\n<p>d</p>\n</li>\n</ul>\n"
+      it "CM276" $
+        "- a\n- b\n\n  [ref]: /url\n- d\n" ==->
+          "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n<li>\n<p>d</p>\n</li>\n</ul>\n"
+      it "CM277" $
+        "- a\n- ```\n  b\n\n\n  ```\n- c\n" ==->
+          "<ul>\n<li>a</li>\n<li>\n<pre><code>b\n\n\n</code></pre>\n</li>\n<li>c</li>\n</ul>\n"
+      it "CM278" $
+        "- a\n  - b\n\n    c\n- d\n" ==->
+          "<ul>\n<li>a\n<ul>\n<li>\n<p>b</p>\n<p>c</p>\n</li>\n</ul>\n</li>\n<li>d</li>\n</ul>\n"
+      it "CM279" $
+        "* a\n  > b\n  >\n* c\n" ==->
+          "<ul>\n<li>a\n<blockquote>\n<p>b</p>\n</blockquote>\n</li>\n<li>c</li>\n</ul>\n"
+      it "CM280" $
+        "- a\n  > b\n  ```\n  c\n  ```\n- d\n" ==->
+          "<ul>\n<li>a\n<blockquote>\n<p>b</p>\n</blockquote>\n<pre><code>c\n</code></pre>\n</li>\n<li>d</li>\n</ul>\n"
+      it "CM281" $
+        "- a\n" ==->
+          "<ul>\n<li>a</li>\n</ul>\n"
+      it "CM282" $
+        "- a\n  - b\n" ==->
+          "<ul>\n<li>a\n<ul>\n<li>b</li>\n</ul>\n</li>\n</ul>\n"
+      it "CM283" $
+        "1. ```\n   foo\n   ```\n\n   bar\n" ==->
+          "<ol>\n<li>\n<pre><code>foo\n</code></pre>\n<p>bar</p>\n</li>\n</ol>\n"
+      it "CM284" $
+        "* foo\n  * bar\n\n  baz\n" ==->
+          "<ul>\n<li>\n<p>foo</p>\n<ul>\n<li>bar</li>\n</ul>\n<p>baz</p>\n</li>\n</ul>\n"
+      it "CM285" $
+        "- a\n  - b\n  - c\n\n- d\n  - e\n  - f\n" ==->
+          "<ul>\n<li>\n<p>a</p>\n<ul>\n<li>b</li>\n<li>c</li>\n</ul>\n</li>\n<li>\n<p>d</p>\n<ul>\n<li>e</li>\n<li>f</li>\n</ul>\n</li>\n</ul>\n"
     context "6 Inlines" $
       it "CM286" $
         let s  = "`hi`lo`\n"
