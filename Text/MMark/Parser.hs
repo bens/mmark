@@ -30,6 +30,7 @@ where
 import Control.Applicative
 import Control.DeepSeq
 import Control.Monad
+import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Bifunctor (Bifunctor (..))
 import Data.Data (Data)
@@ -61,7 +62,18 @@ import qualified Text.URI                   as URI
 
 -- | Parser type we use internally.
 
-type Parser = Parsec MMarkErr Text
+type Parser = ParsecT MMarkErr Text (Reader BlockEnv)
+
+-- | Reader environment of the block-level parser.
+
+data BlockEnv = BlockEnv
+  { benvRefLevel :: {-# UNPACK #-} !Pos
+    -- ^ Reference level of enclosing construction; for top-level document
+    -- it's column 1 (columns start from 1), for block quotes and lists it's
+    -- the column on which their content starts.
+  , benvInBlockquote :: {-# UNPACK #-} !Bool
+    -- ^ Whether we're in a block quote.
+  } deriving (Eq, Ord, Show)
 
 -- | MMark custom parse errors.
 
@@ -157,7 +169,7 @@ parse
   -> Either (NonEmpty (ParseError Char MMarkErr)) MMark
      -- ^ Parse errors or parsed document
 parse file input =
-  case runParser ((,) <$> optional pYamlBlock <*> pBlocks) file input of
+  case runReader (runParserT p file input) benv of
     -- NOTE This parse error only happens when document structure on block
     -- level cannot be parsed even with recovery, which should not normally
     -- happen.
@@ -179,6 +191,13 @@ parse file input =
              , mmarkBlocks    = fmap fromRight <$> parsed
              , mmarkExtension = mempty }
            Just es -> Left es
+  where
+    p    = (,)
+      <$> optional pYamlBlock
+      <*> pBlocks
+    benv = BlockEnv
+      { benvRefLevel     = pos1
+      , benvInBlockquote = False }
 
 pYamlBlock :: Parser Yaml.Value
 pYamlBlock = do
@@ -211,6 +230,9 @@ pBlock = choice
   , pAtxHeading
   , pure <$> pFencedCodeBlock
   , try (pure <$> pIndentedCodeBlock)
+  , pure <$> pUnorderedList
+  , pure <$> pOrderedList
+  , pure <$> pBlockquote
   , pure <$> pParagraph ]
 
 pThematicBreak :: Parser (Block Isp)
@@ -293,6 +315,15 @@ pIndentedCodeBlock = do
       g (x:xs) = f x : xs
   ls <- g . reverse . dropWhile isBlank <$> go []
   CodeBlock Nothing (assembleCodeBlock (mkPos 5) ls) <$ sc
+
+pUnorderedList :: Parser (Block Isp)
+pUnorderedList = empty -- TODO
+
+pOrderedList :: Parser (Block Isp)
+pOrderedList = empty -- TODO
+
+pBlockquote :: Parser (Block Isp)
+pBlockquote = empty -- TODO
 
 pParagraph :: Parser (Block Isp)
 pParagraph = do
@@ -535,19 +566,49 @@ pPlain = Plain . T.pack <$> some
     isOther x = not (isMarkupChar x) && x /= '\\' && x /= '!' && x /= '<'
 
 ----------------------------------------------------------------------------
--- Parsing helpers
+-- Block-level environment manipulations
+
+-- | Alter the environment reflecting the fact that we've entered a list
+-- item.
+
+enterList :: Parser a -> Parser a
+enterList m = do
+  i <- L.indentLevel
+  flip local m $ \x ->
+    x { benvRefLevel = i }
+
+-- | Alter the environment reflecting the fact that we've entered a
+-- blockquote.
+
+enterBlockquote :: Parser a -> Parser a
+enterBlockquote m = do
+  i <- L.indentLevel
+  flip local m $ \x ->
+    x { benvRefLevel = i
+      , benvInBlockquote = True }
 
 casualLevel :: Parser Pos
-casualLevel = L.indentGuard sc LT (mkPos 5)
+casualLevel = do
+  rlevel <- asks benvRefLevel
+  L.indentGuard sc LT (rlevel <> mkPos 4)
 
 casualLevel' :: Parser Pos
-casualLevel' = L.indentGuard sc' LT (mkPos 5)
+casualLevel' = do
+  rlevel <- asks benvRefLevel
+  L.indentGuard sc' LT (rlevel <> mkPos 4)
 
 codeBlockLevel :: Parser Pos
-codeBlockLevel = L.indentGuard sc GT (mkPos 4)
+codeBlockLevel = do
+  rlevel <- asks benvRefLevel
+  L.indentGuard sc GT (rlevel <> mkPos 3)
 
 codeBlockLevel' :: Parser Pos
-codeBlockLevel' = L.indentGuard sc' GT (mkPos 4)
+codeBlockLevel' = do
+  rlevel <- asks benvRefLevel
+  L.indentGuard sc' GT (rlevel <> mkPos 3)
+
+----------------------------------------------------------------------------
+-- Parsing helpers
 
 nonEmptyLine :: Parser Text
 nonEmptyLine = takeWhile1P Nothing notNewline
@@ -651,15 +712,15 @@ isTransparent x = Char.isSpace x || isTransparentPunctuation x
 nes :: a -> NonEmpty a
 nes a = a :| []
 
-assembleParagraph :: [Text] -> Text
+assembleCodeBlock :: Pos -> [Text] -> Text -- TODO take into account new setup
+assembleCodeBlock indent ls = T.unlines (stripIndent indent <$> ls)
+
+assembleParagraph :: [Text] -> Text -- TODO the same
 assembleParagraph = go
   where
     go []     = ""
     go [x]    = T.dropWhileEnd isSpace x
     go (x:xs) = x <> "\n" <> go xs
-
-assembleCodeBlock :: Pos -> [Text] -> Text
-assembleCodeBlock indent ls = T.unlines (stripIndent indent <$> ls)
 
 indentLevel :: Text -> Int
 indentLevel = T.foldl' f 0 . T.takeWhile isSpace
