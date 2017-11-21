@@ -360,6 +360,33 @@ spec = parallel $ do
       it "CM204" $
         "> foo\n> bar\n" ==->
           "<blockquote>\n<p>foo\nbar</p>\n</blockquote>\n"
+      it "CM205" $
+        "> foo\n>\n> bar\n" ==->
+          "<blockquote>\n<p>foo</p>\n<p>bar</p>\n</blockquote>\n"
+      it "CM206" $
+        "foo\n> bar\n" ==->
+          "<p>foo</p>\n<blockquote>\n<p>bar</p>\n</blockquote>\n"
+      it "CM207" $
+        "> aaa\n***\n> bbb\n" ==->
+          "<blockquote>\n<p>aaa</p>\n</blockquote>\n<hr />\n<blockquote>\n<p>bbb</p>\n</blockquote>\n"
+      it "CM208" $
+        "> bar\nbaz\n" ==->
+          "<blockquote>\n<p>bar\nbaz</p>\n</blockquote>\n"
+      it "CM209" $
+        "> bar\n\nbaz\n" ==->
+          "<blockquote>\n<p>bar</p>\n</blockquote>\n<p>baz</p>\n"
+      it "CM210" $
+        "> bar\n>\nbaz\n" ==->
+          "<blockquote>\n<p>bar</p>\n</blockquote>\n<p>baz</p>\n"
+      it "CM211" $
+        "> > > foo\nbar\n" ==->
+          "<blockquote>\n<blockquote>\n<blockquote>\n<p>foo\nbar</p>\n</blockquote>\n</blockquote>\n</blockquote>\n"
+      it "CM212" $
+        ">>> foo\n> bar\n>>baz\n" ==->
+          "<blockquote>\n<blockquote>\n<blockquote>\n<p>foo\nbar\nbaz</p>\n</blockquote>\n</blockquote>\n</blockquote>\n"
+      it "CM213" $
+        ">     code\n\n>    not code\n" ==->
+          "<blockquote>\n<pre><code>code\n</code></pre>\n</blockquote>\n<blockquote>\n<p>not code</p>\n</blockquote>\n"
     context "5.2 List items" $ do
       it "CM214" $
         "A paragraph\nwith two lines.\n\n    indented code\n\n> A block quote.\n" ==->
@@ -382,6 +409,87 @@ spec = parallel $ do
       it "CM220" $
         "   > > 1.  one\n>>\n>>     two\n" ==->
           "<blockquote>\n<blockquote>\n<ol>\n<li>\n<p>one</p>\n<p>two</p>\n</li>\n</ol>\n</blockquote>\n</blockquote>\n"
+      it "CM221" $
+        ">>- one\n>>\n  >  > two\n" ==->
+          "<blockquote>\n<blockquote>\n<ul>\n<li>one</li>\n</ul>\n<p>two</p>\n</blockquote>\n</blockquote>\n"
+      it "CM222" $
+        "-one\n\n2.two\n" ==->
+          "<p>-one</p>\n<p>2.two</p>\n"
+      it "CM223" $
+        "- foo\n\n\n  bar\n" ==->
+          "<ul>\n<li>\n<p>foo</p>\n<p>bar</p>\n</li>\n</ul>\n"
+      it "CM224" $
+        "1.  foo\n\n    ```\n    bar\n    ```\n\n    baz\n\n    > bam\n" ==->
+          "<ol>\n<li>\n<p>foo</p>\n<pre><code>bar\n</code></pre>\n<p>baz</p>\n<blockquote>\n<p>bam</p>\n</blockquote>\n</li>\n</ol>\n"
+      it "CM225" $
+        "- Foo\n\n      bar\n\n\n      baz\n" ==->
+          "<ul>\n<li>\n<p>Foo</p>\n<pre><code>bar\n\n\nbaz\n</code></pre>\n</li>\n</ul>\n"
+      it "CM226" $
+        "123456789. ok\n" ==->
+          "<ol start=\"123456789\">\n<li>ok</li>\n</ol>\n"
+      it "CM227" $
+        "1234567890. not ok\n" ==->
+          "<p>1234567890. not ok</p>\n"
+      it "CM228" $
+        "0. ok\n" ==->
+          "<ol start=\"0\">\n<li>ok</li>\n</ol>\n"
+      it "CM229" $
+        "003. ok\n" ==->
+          "<ol start=\"3\">\n<li>ok</li>\n</ol>\n"
+      it "CM230" $
+        "-1. not ok\n" ==->
+          "<p>-1. not ok</p>\n"
+      it "CM231" $
+        "- foo\n\n      bar\n" ==->
+          "<ul>\n<li>\n<p>foo</p>\n<pre><code>bar\n</code></pre>\n</li>\n</ul>\n"
+      it "CM232" $
+        "  10.  foo\n\n           bar\n" ==->
+          "<ol start=\"10\">\n<li>\n<p>foo</p>\n<pre><code>bar\n</code></pre>\n</li>\n</ol>\n"
+      it "CM233" $
+        "    indented code\n\nparagraph\n\n    more code\n" ==->
+          "<pre><code>indented code\n</code></pre>\n<p>paragraph</p>\n<pre><code>more code\n</code></pre>\n"
+      it "CM234" $
+        "1.     indented code\n\n   paragraph\n\n       more code\n" ==->
+          "<ol>\n<li>\n<pre><code>indented code\n</code></pre>\n<p>paragraph</p>\n<pre><code>more code\n</code></pre>\n</li>\n</ol>\n"
+      it "CM235" $
+        "1.      indented code\n\n   paragraph\n\n       more code\n" ==->
+          "<ol>\n<li>\n<pre><code> indented code\n</code></pre>\n<p>paragraph</p>\n<pre><code>more code\n</code></pre>\n</li>\n</ol>\n"
+      it "CM236" $
+        "   foo\n\nbar\n" ==->
+          "<p>foo</p>\n<p>bar</p>\n"
+      it "CM237" $
+        "-    foo\n\n  bar\n" ==->
+          "<ul>\n<li>foo</li>\n</ul>\n<p>bar</p>\n"
+      it "CM238" $
+        "-  foo\n\n   bar\n" ==->
+          "<ul>\n<li>\n<p>foo</p>\n<p>bar</p>\n</li>\n</ul>\n"
+      it "CM239" $
+        "-\n  foo\n-\n  ```\n  bar\n  ```\n-\n      baz\n" ==->
+          "<ul>\n<li>foo</li>\n<li>\n<pre><code>bar\n</code></pre>\n</li>\n<li>\n<pre><code>baz\n</code></pre>\n</li>\n</ul>\n"
+      it "CM240" $
+        "-   \n  foo\n" ==->
+          "<ul>\n<li>foo</li>\n</ul>\n"
+      it "CM241" $
+        "-\n\n  foo\n" ==->
+          "<ul>\n<li></li>\n</ul>\n<p>foo</p>\n"
+      it "CM242" $
+        "- foo\n-\n- bar\n" ==->
+          "<ul>\n<li>foo</li>\n<li></li>\n<li>bar</li>\n</ul>\n"
+      it "CM243" $
+        "- foo\n-   \n- bar\n" ==->
+          "<ul>\n<li>foo</li>\n<li></li>\n<li>bar</li>\n</ul>\n"
+      it "CM244" $
+        "1. foo\n2.\n3. bar\n" ==->
+          "<ol>\n<li>foo</li>\n<li></li>\n<li>bar</li>\n</ol>\n"
+      it "CM245" $
+        "*\n" ==->
+          "<ul>\n<li></li>\n</ul>\n"
+      it "CM246" $
+        "foo\n*\n\nfoo\n1.\n" ==->
+          "<p>foo\n*</p>\n<p>foo\n1.</p>\n"
+      it "CM247" $
+        " 1.  A paragraph\n     with two lines.\n\n         indented code\n\n     > A block quote.\n" ==->
+          "<ol>\n<li>\n<p>A paragraph\nwith two lines.</p>\n<pre><code>indented code\n</code></pre>\n<blockquote>\n<p>A block quote.</p>\n</blockquote>\n</li>\n</ol>\n"
     context "6 Inlines" $
       it "CM286" $
         let s  = "`hi`lo`\n"
