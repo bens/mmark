@@ -314,10 +314,21 @@ pIndentedCodeBlock = do
 
 pUnorderedList :: BParser (E (Block Isp))
 pUnorderedList = do
-  let p = do
+  let p :: BParser (E (Block Isp))
+      p = do
         (void . try) (char '*' <* sc1')
         newRefLevel (sequence <$> many pBlock) -- FIXME
-  xs <- NE.some p
+
+  -- TODO We either need a different way to collect parse errors on the
+  -- block level, or we need to allow to return multiple parse erros in case
+  -- of failure.
+
+  -- TODO Before trying 'many pBlock' we need to try to parse a nacked
+  -- paragraph. The parser for naked paragraph can be derived from existing
+  -- pParagraph thing.
+
+  xs <- NE.some p -- no idea how to re-arrange parse errors from p here
+
   return $ case r of
     Left err -> Left err
     Right xs -> Right (UnorderedList xs)
