@@ -60,20 +60,11 @@ import qualified Text.URI                   as URI
 ----------------------------------------------------------------------------
 -- Data types
 
--- | Parser type we use internally.
+-- | Block-level parser type. The 'Reader' monad inside allows to access
+-- current reference level: 1 column for top-level of document, column where
+-- content starts for block quotes and lists.
 
-type Parser = ParsecT MMarkErr Text (Reader BlockEnv)
-
--- | Reader environment of the block-level parser.
-
-data BlockEnv = BlockEnv
-  { benvRefLevel :: {-# UNPACK #-} !Pos
-    -- ^ Reference level of enclosing construction; for top-level document
-    -- it's column 1 (columns start from 1), for block quotes and lists it's
-    -- the column on which their content starts.
-  , benvInBlockquote :: {-# UNPACK #-} !Bool
-    -- ^ Whether we're in a block quote.
-  } deriving (Eq, Ord, Show)
+type BParser = ParsecT MMarkErr Text (Reader Pos)
 
 -- | MMark custom parse errors.
 
@@ -93,7 +84,8 @@ instance ShowErrorComponent MMarkErr where
 
 instance NFData MMarkErr
 
--- | Parser type for inlines.
+-- | Inline-level parser type. We store type of the last consumed character
+-- in the state.
 
 type IParser = StateT CharType (Parsec MMarkErr Text)
 
@@ -105,7 +97,7 @@ data Isp = Isp SourcePos Text
 -- | Type of last seen character.
 
 data CharType
-  = SpaceChar          -- ^ White space
+  = SpaceChar          -- ^ White space or a transparent character
   | LeftFlankingDel    -- ^ Left flanking delimiter
   | RightFlankingDel   -- ^ Right flaking delimiter
   | OtherChar          -- ^ Other character
@@ -131,7 +123,7 @@ data InlineState
   | DoubleFrame InlineFrame InlineFrame -- ^ Two frames to be closed
   deriving (Eq, Ord, Show)
 
--- | Configuration in inline parser.
+-- | Configuration of inline parser.
 
 data InlineConfig = InlineConfig
   { iconfigAllowEmpty :: !Bool
@@ -169,7 +161,7 @@ parse
   -> Either (NonEmpty (ParseError Char MMarkErr)) MMark
      -- ^ Parse errors or parsed document
 parse file input =
-  case runReader (runParserT p file input) benv of
+  case runReader (runParserT p file input) pos1 of
     -- NOTE This parse error only happens when document structure on block
     -- level cannot be parsed even with recovery, which should not normally
     -- happen.
@@ -192,14 +184,10 @@ parse file input =
              , mmarkExtension = mempty }
            Just es -> Left es
   where
-    p    = (,)
-      <$> optional pYamlBlock
-      <*> pBlocks
-    benv = BlockEnv
-      { benvRefLevel     = pos1
-      , benvInBlockquote = False }
+    p = (,) <$> optional pYamlBlock
+            <*> (setTabWidth (mkPos 4) *> many pBlock)
 
-pYamlBlock :: Parser Yaml.Value
+pYamlBlock :: BParser Yaml.Value
 pYamlBlock = do
   dpos <- getPosition
   string "---" *> sc' *> eol
@@ -219,23 +207,30 @@ pYamlBlock = do
     Right v ->
       return v
 
-pBlocks :: Parser [E (Block Isp)]
-pBlocks = do
-  setTabWidth (mkPos 4)
-  sc *> manyTill pBlock eof
+pBlock :: BParser (E (Block Isp))
+pBlock = do
+  sc
+  rlevel <- ask
+  alevel <- L.indentLevel
+  done   <- atEnd
+  let b p = try (pure <$> p)
+      l p =      pure <$> p
+  if done || alevel < rlevel
+    then empty
+    else case compare alevel (ilevel rlevel) of
+           LT -> choice
+             [ b pThematicBreak
+             ,   pAtxHeading
+             , l pFencedCodeBlock
+             , b pIndentedCodeBlock
+             ,   pUnorderedList
+             -- , l pOrderedList
+             -- , l pBlockquote
+             , l pParagraph ]
+           _  ->
+               b pIndentedCodeBlock
 
-pBlock :: Parser (E (Block Isp))
-pBlock = choice
-  [ try (pure <$> pThematicBreak)
-  , pAtxHeading
-  , pure <$> pFencedCodeBlock
-  , try (pure <$> pIndentedCodeBlock)
-  , pure <$> pUnorderedList
-  , pure <$> pOrderedList
-  , pure <$> pBlockquote
-  , pure <$> pParagraph ]
-
-pThematicBreak :: Parser (Block Isp)
+pThematicBreak :: BParser (Block Isp)
 pThematicBreak = do
   void casualLevel
   l <- lookAhead nonEmptyLine
@@ -243,7 +238,7 @@ pThematicBreak = do
     then ThematicBreak <$ nonEmptyLine <* sc
     else empty
 
-pAtxHeading :: Parser (E (Block Isp))
+pAtxHeading :: BParser (E (Block Isp))
 pAtxHeading = do
   (void . lookAhead . try) start
   withRecovery recover $ do
@@ -261,13 +256,12 @@ pAtxHeading = do
           _ -> Heading6
     (Right . toBlock) (Isp ispPos (T.strip (T.pack r))) <$ sc
   where
-    start = casualLevel *> count' 1 6 (char '#')
+    start = count' 1 6 (char '#')
     recover err =
       Left err <$ takeWhileP Nothing notNewline <* sc
 
-pFencedCodeBlock :: Parser (Block Isp)
+pFencedCodeBlock :: BParser (Block Isp)
 pFencedCodeBlock = do
-  level <- casualLevel
   let p ch = try $ do
         void $ count 3 (char ch)
         n  <- (+ 3) . length <$> many (char ch)
@@ -290,11 +284,12 @@ pFencedCodeBlock = do
         sc'
         eof <|> eol
   ls <- manyTill content closingFence
-  CodeBlock infoString (assembleCodeBlock level ls) <$ sc
+  rlevel <- ask
+  CodeBlock infoString (assembleCodeBlock rlevel ls) <$ sc
 
-pIndentedCodeBlock :: Parser (Block Isp)
+pIndentedCodeBlock :: BParser (Block Isp)
 pIndentedCodeBlock = do
-  initialIndent <- codeBlockLevel
+  initialIndent <- L.indentLevel
   let go ls = do
         immediate <- lookAhead (True <$ try codeBlockLevel' <|> pure False)
         eventual  <- lookAhead (True <$ try codeBlockLevel  <|> pure False)
@@ -314,18 +309,26 @@ pIndentedCodeBlock = do
       g []     = []
       g (x:xs) = f x : xs
   ls <- g . reverse . dropWhile isBlank <$> go []
-  CodeBlock Nothing (assembleCodeBlock (mkPos 5) ls) <$ sc
+  rlevel <- ask
+  CodeBlock Nothing (assembleCodeBlock (ilevel rlevel) ls) <$ sc
 
-pUnorderedList :: Parser (Block Isp)
-pUnorderedList = empty -- TODO
+pUnorderedList :: BParser (E (Block Isp))
+pUnorderedList = do
+  let p = do
+        (void . try) (char '*' <* sc1')
+        newRefLevel (sequence <$> many pBlock) -- FIXME
+  xs <- NE.some p
+  return $ case r of
+    Left err -> Left err
+    Right xs -> Right (UnorderedList xs)
 
-pOrderedList :: Parser (Block Isp)
+pOrderedList :: BParser (Block Isp)
 pOrderedList = empty -- TODO
 
-pBlockquote :: Parser (Block Isp)
+pBlockquote :: BParser (Block Isp)
 pBlockquote = empty -- TODO
 
-pParagraph :: Parser (Block Isp)
+pParagraph :: BParser (Block Isp)
 pParagraph = do
   void casualLevel
   startPos <- getPosition
@@ -343,7 +346,8 @@ pParagraph = do
   l        <- nonEmptyLine
   continue <- eol'
   ls       <- if continue then go else return []
-  Paragraph (Isp startPos (assembleParagraph (l:ls))) <$ sc
+  rlevel   <- ask
+  Paragraph (Isp startPos (assembleParagraph rlevel (l:ls))) <$ sc
 
 ----------------------------------------------------------------------------
 -- Inline parser
@@ -568,49 +572,38 @@ pPlain = Plain . T.pack <$> some
 ----------------------------------------------------------------------------
 -- Block-level environment manipulations
 
--- | Alter the environment reflecting the fact that we've entered a list
--- item.
-
-enterList :: Parser a -> Parser a
-enterList m = do
-  i <- L.indentLevel
-  flip local m $ \x ->
-    x { benvRefLevel = i }
-
--- | Alter the environment reflecting the fact that we've entered a
--- blockquote.
-
-enterBlockquote :: Parser a -> Parser a
-enterBlockquote m = do
-  i <- L.indentLevel
-  flip local m $ \x ->
-    x { benvRefLevel = i
-      , benvInBlockquote = True }
-
-casualLevel :: Parser Pos
+casualLevel :: BParser Pos
 casualLevel = do
-  rlevel <- asks benvRefLevel
+  rlevel <- ask
   L.indentGuard sc LT (rlevel <> mkPos 4)
 
-casualLevel' :: Parser Pos
+casualLevel' :: BParser Pos
 casualLevel' = do
-  rlevel <- asks benvRefLevel
+  rlevel <- ask
   L.indentGuard sc' LT (rlevel <> mkPos 4)
 
-codeBlockLevel :: Parser Pos
+codeBlockLevel :: BParser Pos
 codeBlockLevel = do
-  rlevel <- asks benvRefLevel
+  rlevel <- ask
   L.indentGuard sc GT (rlevel <> mkPos 3)
 
-codeBlockLevel' :: Parser Pos
+codeBlockLevel' :: BParser Pos
 codeBlockLevel' = do
-  rlevel <- asks benvRefLevel
+  rlevel <- ask
   L.indentGuard sc' GT (rlevel <> mkPos 3)
+
+newRefLevel :: BParser a -> BParser a
+newRefLevel m = do
+  c <- L.indentLevel
+  local (const c) m
+
+ilevel :: Pos -> Pos
+ilevel = (<> mkPos 4)
 
 ----------------------------------------------------------------------------
 -- Parsing helpers
 
-nonEmptyLine :: Parser Text
+nonEmptyLine :: BParser Text
 nonEmptyLine = takeWhile1P Nothing notNewline
 
 manyEscapedWith :: MonadParsec e Text m => (Char -> Bool) -> String -> m Text
@@ -712,11 +705,11 @@ isTransparent x = Char.isSpace x || isTransparentPunctuation x
 nes :: a -> NonEmpty a
 nes a = a :| []
 
-assembleCodeBlock :: Pos -> [Text] -> Text -- TODO take into account new setup
+assembleCodeBlock :: Pos -> [Text] -> Text
 assembleCodeBlock indent ls = T.unlines (stripIndent indent <$> ls)
 
-assembleParagraph :: [Text] -> Text -- TODO the same
-assembleParagraph = go
+assembleParagraph :: Pos -> [Text] -> Text -- TODO strip '>' here properly
+assembleParagraph _ = go
   where
     go []     = ""
     go [x]    = T.dropWhileEnd isSpace x
@@ -733,7 +726,8 @@ indentLevel = T.foldl' f 0 . T.takeWhile isSpace
 stripIndent :: Pos -> Text -> Text
 stripIndent indent txt = T.drop m txt
   where
-    m = snd $ T.foldl' f (0, 0) (T.takeWhile isSpace txt)
+    m = snd $ T.foldl' f (0, 0) (T.takeWhile p txt)
+    p x = isSpace x || x == '>'
     f (!j, !n) ch
       | j  >= i    = (j, n)
       | ch == ' '  = (j + 1, n + 1)

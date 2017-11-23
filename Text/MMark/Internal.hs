@@ -57,6 +57,7 @@ import Data.Typeable (Typeable)
 import GHC.Generics
 import Lucid
 import Text.URI (URI (..))
+import qualified Control.Applicative.Combinators.NonEmpty as NE
 import qualified Control.Foldl as L
 import qualified Data.Text     as T
 import qualified Text.URI      as URI
