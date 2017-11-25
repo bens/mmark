@@ -144,7 +144,11 @@ instance Default InlineConfig where
 -- | A shortcut type synonym for sub-parsers that may fail and we can
 -- recover from the failure.
 
-type E = Either (NonEmpty (ParseError Char MMarkErr))
+type E = Either Errs
+
+-- | A shortcut type synonym for collection of parse errors.
+
+type Errs = NonEmpty (ParseError Char MMarkErr)
 
 ----------------------------------------------------------------------------
 -- Block parser
@@ -166,34 +170,25 @@ parse file input =
     -- level cannot be parsed even with recovery, which should not normally
     -- happen.
     Left err -> Left (nes err)
-    Right (myaml, blocks) ->
-      let parsed :: [Block (Either (NonEmpty (ParseError Char MMarkErr)) (NonEmpty Inline))]
-          parsed = doInline <$> blocks
-          doInline
-            :: Either (NonEmpty (ParseError Char MMarkErr)) (Block Isp)
-            -> Block (Either (NonEmpty (ParseError Char MMarkErr)) (NonEmpty Inline))
+    Right (myaml, rawBlocks) ->
+      let parsed :: [Block (E (NonEmpty Inline))]
+          parsed = doInline <$> rawBlocks
+          doInline :: E (Block Isp) -> Block (E (NonEmpty Inline))
           doInline = \case
-            -- NOTE This parse errors are from block-level parsers, this is
-            -- the ('NonEmpty' ('ParseError' 'Char' 'MMarkErr')) thing.
+            -- NOTE These parse errors are from block-level parsers.
             Left errs   -> Naked (Left errs)
             Right block -> first (nes . replaceEof "end of inline block")
               . runIsp (pInlines def <* eof) <$> block
-          getErrs
-            :: Either (NonEmpty (ParseError Char MMarkErr)) w
-            -> [NonEmpty (ParseError Char MMarkErr)]
-            -> [NonEmpty (ParseError Char MMarkErr)]
-          getErrs (Left e) es = e : es
-          getErrs _        es = es
-          fromRight (Right x) = x
-          fromRight _         =
-            error "Text.MMark.Parser.parse: the impossible happened"
-      in case (fmap sconcat . NE.nonEmpty)
-              (foldMap (foldr getErrs []) parsed) of
-           Nothing -> Right MMark
+          g block =
+            case collapseErrs eitherToPair block of
+              Left errs -> PairL errs
+              Right _   -> PairR [fromRight <$> block]
+      in case collapseErrs g parsed of
+           Left errs    -> Left errs
+           Right blocks -> Right MMark
              { mmarkYaml      = myaml
-             , mmarkBlocks    = fmap fromRight <$> parsed
+             , mmarkBlocks    = blocks
              , mmarkExtension = mempty }
-           Just es -> Left es
   where
     p = (,) <$> optional pYamlBlock
             <*> (setTabWidth (mkPos 4) *> many pBlock)
@@ -235,8 +230,8 @@ pBlock = do
              , l pFencedCodeBlock
              , b pIndentedCodeBlock
              ,   pUnorderedList
-             -- , l pOrderedList
-             -- , l pBlockquote
+             ,   pOrderedList
+             -- ,  pBlockquote
              , l pParagraph ]
            _  ->
                b pIndentedCodeBlock
@@ -324,31 +319,27 @@ pIndentedCodeBlock = do
   CodeBlock Nothing (assembleCodeBlock (ilevel rlevel) ls) <$ sc
 
 pUnorderedList :: BParser (E (Block Isp))
-pUnorderedList = do
-  let p :: BParser (E (Block Isp))
-      p = do
-        (void . try) (char '*' <* sc1')
-        newRefLevel (sequence <$> many pBlock) -- FIXME
+pUnorderedList = restore . some $ do
+  (void . try) (char '*' <* sc1')
+  -- TODO support narrow list items
+  collapseErrs eitherToPair <$> newRefLevel (many pBlock)
+  where
+    restore = fmap $
+      second (UnorderedList . NE.fromList) . collapseErrs eitherToPair
 
-  -- TODO We either need a different way to collect parse errors on the
-  -- block level, or we need to allow to return multiple parse erros in case
-  -- of failure.
+pOrderedList :: BParser (E (Block Isp))
+pOrderedList = restore . some $ do
+  (void . try) ((L.decimal :: BParser Integer) <* char '.' <* sc1')
+  -- TODO support narrow list items
+  -- TODO start index of the list
+  -- TODO also validate that the indices in the list are consecutive
+  collapseErrs eitherToPair <$> newRefLevel (many pBlock)
+  where
+    restore = fmap $
+      second (OrderedList . NE.fromList) . collapseErrs eitherToPair
 
-  -- TODO Before trying 'many pBlock' we need to try to parse a nacked
-  -- paragraph. The parser for naked paragraph can be derived from existing
-  -- pParagraph thing.
-
-  xs <- NE.some p -- no idea how to re-arrange parse errors from p here
-
-  return $ case r of
-    Left err -> Left err
-    Right xs -> Right (UnorderedList xs)
-
-pOrderedList :: BParser (Block Isp)
-pOrderedList = empty -- TODO
-
-pBlockquote :: BParser (Block Isp)
-pBlockquote = empty -- TODO
+-- pBlockquote :: BParser (E (Block Isp))
+-- pBlockquote = empty -- TODO
 
 pParagraph :: BParser (Block Isp)
 pParagraph = do
@@ -730,7 +721,9 @@ nes a = a :| []
 assembleCodeBlock :: Pos -> [Text] -> Text
 assembleCodeBlock indent ls = T.unlines (stripIndent indent <$> ls)
 
-assembleParagraph :: Pos -> [Text] -> Text -- TODO strip '>' here properly
+assembleParagraph :: Pos -> [Text] -> Text
+-- TODO Strip '>' to the left of the indentation level here (indentation
+-- level is given as the first argument).
 assembleParagraph _ = go
   where
     go []     = ""
@@ -837,3 +830,35 @@ splitYamlError file str = maybe (Nothing, str) (first pure) (parseMaybe p str)
       void (string ":\n")
       r <- takeRest
       return (SourcePos file l c, r)
+
+data Pair s a = PairL s | PairR [a]
+
+instance Semigroup s => Semigroup (Pair s a) where
+  (PairL l) <> (PairL r) = PairL (l <> r)
+  (PairL l) <> (PairR _) = PairL l
+  (PairR _) <> (PairL r) = PairL r
+  (PairR l) <> (PairR r) = PairR (l ++ r)
+  -- NOTE l in the last case almost always will be a singleton list, so the
+  -- concatenation here won't suck so much.
+
+instance Semigroup s => Monoid (Pair s a) where
+  mempty  = PairR []
+  mappend = (<>)
+
+collapseErrs :: (Foldable f, Semigroup s)
+  => (a -> Pair s b)
+  -> f a
+  -> Either s [b]
+collapseErrs g fa =
+  case foldMap g fa of
+    PairL errs -> Left errs
+    PairR xs   -> Right xs
+
+eitherToPair :: Either a b -> Pair a b
+eitherToPair (Left  a) = PairL a
+eitherToPair (Right b) = PairR [b]
+
+fromRight :: Either a b -> b
+fromRight (Right x) = x
+fromRight _         =
+  error "Text.MMark.Parser.fromRight: the impossible happened"
