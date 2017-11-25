@@ -37,7 +37,7 @@ import Data.Data (Data)
 import Data.Default.Class
 import Data.List.NonEmpty (NonEmpty (..), (<|))
 import Data.Maybe (isNothing, fromJust, fromMaybe)
-import Data.Semigroup ((<>))
+import Data.Semigroup (Semigroup (..))
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import Data.Void
@@ -144,7 +144,7 @@ instance Default InlineConfig where
 -- | A shortcut type synonym for sub-parsers that may fail and we can
 -- recover from the failure.
 
-type E = Either (ParseError Char MMarkErr)
+type E = Either (NonEmpty (ParseError Char MMarkErr))
 
 ----------------------------------------------------------------------------
 -- Block parser
@@ -167,17 +167,28 @@ parse file input =
     -- happen.
     Left err -> Left (nes err)
     Right (myaml, blocks) ->
-      let parsed = doInline <$> blocks
+      let parsed :: [Block (Either (NonEmpty (ParseError Char MMarkErr)) (NonEmpty Inline))]
+          parsed = doInline <$> blocks
+          doInline
+            :: Either (NonEmpty (ParseError Char MMarkErr)) (Block Isp)
+            -> Block (Either (NonEmpty (ParseError Char MMarkErr)) (NonEmpty Inline))
           doInline = \case
-            Left err -> Naked (Left err)
-            Right x  -> first (replaceEof "end of inline block")
-              . runIsp (pInlines def <* eof) <$> x
+            -- NOTE This parse errors are from block-level parsers, this is
+            -- the ('NonEmpty' ('ParseError' 'Char' 'MMarkErr')) thing.
+            Left errs   -> Naked (Left errs)
+            Right block -> first (nes . replaceEof "end of inline block")
+              . runIsp (pInlines def <* eof) <$> block
+          getErrs
+            :: Either (NonEmpty (ParseError Char MMarkErr)) w
+            -> [NonEmpty (ParseError Char MMarkErr)]
+            -> [NonEmpty (ParseError Char MMarkErr)]
           getErrs (Left e) es = e : es
           getErrs _        es = es
           fromRight (Right x) = x
           fromRight _         =
             error "Text.MMark.Parser.parse: the impossible happened"
-      in case NE.nonEmpty (foldMap (foldr getErrs []) parsed) of
+      in case (fmap sconcat . NE.nonEmpty)
+              (foldMap (foldr getErrs []) parsed) of
            Nothing -> Right MMark
              { mmarkYaml      = myaml
              , mmarkBlocks    = fmap fromRight <$> parsed
@@ -258,7 +269,7 @@ pAtxHeading = do
   where
     start = count' 1 6 (char '#')
     recover err =
-      Left err <$ takeWhileP Nothing notNewline <* sc
+      Left (nes err) <$ takeWhileP Nothing notNewline <* sc
 
 pFencedCodeBlock :: BParser (Block Isp)
 pFencedCodeBlock = do
